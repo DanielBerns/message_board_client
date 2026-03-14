@@ -31,7 +31,7 @@ async def main(config_path: str) -> None:
         await client.send_public_message(tags=["tech"], content="Strictly typed and encrypted broadcast!")
 
         # Using the group message endpoint
-        await client.send_group_message(recipients=["user1", "user2"], content="Secure group sync.")
+        await client.send_group_message(recipients=["nimda", "test_client"], content="Secure group sync.")
 
         print("\n--- Fetching Decrypted Public Messages ---")
         messages: List[Dict[str, Any]] = await client.get_public_messages()
