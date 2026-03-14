@@ -1,0 +1,8 @@
+# config.yaml
+server:
+  base_url: "http://0.0.0.0:5000"
+credentials:
+  username: "test_client"
+  password: "password"
+encryption:
+  shared_key: "_2s26tcGkgYMEck901CrmTTaY1YQ-Ly4Buz96jrJACw="

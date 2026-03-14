@@ -3,13 +3,14 @@ import yaml
 import logging
 from typing import List, Dict, Any, Optional, Type
 from types import TracebackType
+from cryptography.fernet import Fernet, InvalidToken
 
 logging.basicConfig(level=logging.INFO)
 logger: logging.Logger = logging.getLogger(__name__)
 
 class MessageBoardClient:
     def __init__(self, config_path: str) -> None:
-        """Initializes the client and reads credentials from the YAML config."""
+        """Initializes the client, reads credentials, and sets up encryption."""
         with open(config_path, 'r') as file:
             config: Dict[str, Any] = yaml.safe_load(file)
 
@@ -17,11 +18,16 @@ class MessageBoardClient:
         self.username: str = config['credentials']['username']
         self.password: str = config['credentials']['password']
 
+        shared_key = config.get('encryption', {}).get('shared_key')
+        if not shared_key:
+            raise ValueError("Encryption key missing from configuration.")
+        self.cipher: Fernet = Fernet(shared_key.encode())
+
         self.session: Optional[aiohttp.ClientSession] = None
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
 
-    async def __aenter__(self) -> 'MessageBoardClient':
+    async def __aenter__(self) -> 'SecureMessageBoardClient':
         """Allows usage in an async context manager."""
         self.session = aiohttp.ClientSession()
         await self.login()
@@ -46,10 +52,8 @@ class MessageBoardClient:
         headers: Dict[str, str] = kwargs.pop('headers', {})
 
         if self.access_token and not endpoint.startswith('/auth/login'):
-            # The token must be passed in the headers as: Authorization: Bearer <access_token>
             headers['Authorization'] = f"Bearer {self.access_token}"
 
-        # All payload exchanges are in JSON format
         headers['Content-Type'] = 'application/json'
 
         async with self.session.request(method, url, headers=headers, **kwargs) as response:
@@ -95,35 +99,65 @@ class MessageBoardClient:
         self.refresh_token = None
         logger.info("Logged out successfully.")
 
-    # --- Messaging ---
+    # --- Encryption Helpers ---
+
+    def _encrypt_content(self, content: str) -> str:
+        """Encrypts a plaintext string into a base64 ciphertext string."""
+        return self.cipher.encrypt(content.encode()).decode()
+
+    def _decrypt_content(self, ciphertext: str) -> str:
+        """Decrypts a base64 ciphertext string back to plaintext."""
+        try:
+            return self.cipher.decrypt(ciphertext.encode()).decode()
+        except InvalidToken:
+            return "[Decryption Failed: Invalid Key or Corrupted Data]"
+        except Exception:
+            return "[Decryption Failed: Unrecognized Format]"
+
+    # --- Secure Messaging ---
 
     async def send_private_message(self, recipient: str, content: str) -> Any:
         """Endpoint: POST /api/messages/private"""
-        payload: Dict[str, str] = {"recipient_username": recipient, "content": content}
+        encrypted_content: str = self._encrypt_content(content)
+        payload: Dict[str, str] = {"recipient_username": recipient, "content": encrypted_content}
         return await self._request('POST', '/api/messages/private', json=payload)
 
     async def send_group_message(self, recipients: List[str], content: str) -> Any:
         """Endpoint: POST /api/messages/group"""
-        payload: Dict[str, Any] = {"recipient_usernames": recipients, "content": content}
+        encrypted_content: str = self._encrypt_content(content)
+        payload: Dict[str, Any] = {"recipient_usernames": recipients, "content": encrypted_content}
         return await self._request('POST', '/api/messages/group', json=payload)
 
     async def send_public_message(self, tags: List[str], content: str) -> Any:
         """Endpoint: POST /api/messages/public"""
-        payload: Dict[str, Any] = {"tags": tags, "content": content}
+        encrypted_content: str = self._encrypt_content(content)
+        payload: Dict[str, Any] = {"tags": tags, "content": encrypted_content}
         return await self._request('POST', '/api/messages/public', json=payload)
 
     async def get_private_messages(self) -> List[Dict[str, Any]]:
         """Endpoint: GET /api/messages/private"""
-        return await self._request('GET', '/api/messages/private')
+        messages: List[Dict[str, Any]] = await self._request('GET', '/api/messages/private')
+        for msg in messages:
+            if 'content' in msg:
+                msg['content'] = self._decrypt_content(msg['content'])
+        return messages
 
     async def get_group_messages(self) -> List[Dict[str, Any]]:
         """Endpoint: GET /api/messages/group"""
-        return await self._request('GET', '/api/messages/group')
+        messages: List[Dict[str, Any]] = await self._request('GET', '/api/messages/group')
+        for msg in messages:
+            if 'content' in msg:
+                msg['content'] = self._decrypt_content(msg['content'])
+        return messages
 
     async def get_public_messages(self, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Endpoint: GET /api/messages/public"""
         params: Dict[str, str] = {"tags": ",".join(tags)} if tags else {}
-        return await self._request('GET', '/api/messages/public', params=params)
+        messages: List[Dict[str, Any]] = await self._request('GET', '/api/messages/public', params=params)
+        for msg in messages:
+            if 'content' in msg:
+                msg['content'] = self._decrypt_content(msg['content'])
+        return messages
 
     async def delete_message(self, message_id: str) -> Any:
         """Endpoint: DELETE /api/messages/<message_id>"""
