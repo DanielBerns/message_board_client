@@ -1,0 +1,10 @@
+server_url: "http://localhost:5000"
+security_key: "dummy_key_123"
+admin:
+  username: "admin_test"
+  password: "admin_password"
+users:
+  - username: "client1"
+    password: "client_password1"
+  - username: "client2"
+    password: "client_password2"
